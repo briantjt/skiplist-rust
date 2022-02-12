@@ -1,6 +1,7 @@
-use std::borrow::Borrow;
 use std::cmp::Ordering::*;
+use std::marker::PhantomData;
 use std::ptr;
+use std::{borrow::Borrow, ptr::NonNull};
 
 use rand_distr::{Bernoulli, Distribution};
 
@@ -263,8 +264,8 @@ where
                     }
                     Greater => {
                         current_node = ptr::null_mut();
-                        continue
-                    },
+                        continue;
+                    }
                     _ => {}
                 }
                 let mut next_node = (*current_node).next[level];
@@ -323,6 +324,13 @@ where
         }
     }
 
+    pub fn iter(&self) -> Iter<'_, K, V> {
+        Iter {
+            next: NonNull::new(self.lists[0].head),
+            _marker: PhantomData,
+        }
+    }
+
     pub fn range_iter<'a, Q>(&self, start: &'a Q, end: &'a Q) -> RangeIter<'a, K, V, Q>
     where
         K: Borrow<Q>,
@@ -364,6 +372,29 @@ impl<K, V> Drop for SkipList<K, V> {
     }
 }
 
+pub struct Iter<'a, K: 'a, V: 'a> {
+    next: Option<NonNull<Node<K, V>>>,
+    _marker: PhantomData<&'a K>,
+}
+
+impl<'a, K: 'a, V: 'a> Iterator for Iter<'a, K, V> {
+    type Item = (&'a K, &'a V);
+
+    fn next(&mut self) -> Option<Self::Item> {
+        self.next.map(|node| unsafe {
+            let node = node.as_ptr();
+            let next = (*node).next[0];
+            if !next.is_null() {
+                self.next = NonNull::new(next);
+            } else {
+                self.next = None;
+            }
+            let k = &(*node).key;
+            let v = &(*node).value;
+            (k, v)
+        })
+    }
+}
 pub struct RangeIter<'a, K, V, Q> {
     end: &'a Q,
     next: Link<K, V>,
@@ -372,7 +403,7 @@ pub struct RangeIter<'a, K, V, Q> {
 impl<'a, K: 'a + Ord + Borrow<Q>, V: 'a, Q: Ord> Iterator for RangeIter<'a, K, V, Q> {
     type Item = (&'a K, &'a V);
 
-    fn next(&mut self) -> Option<Self::Item> where {
+    fn next(&mut self) -> Option<Self::Item> {
         if self.next.is_null() {
             None
         } else {
@@ -461,12 +492,41 @@ mod tests {
     }
 
     #[test]
+    fn test_delete() {
+        let mut skiplist = SkipList::new();
+        skiplist.insert(1, 2);
+        skiplist.insert(2, 3);
+        skiplist.insert(3, 4);
+        assert!(skiplist.contains(&1));
+        assert!(skiplist.contains(&2));
+        assert!(skiplist.contains(&3));
+        skiplist.remove(&1);
+        assert!(!skiplist.contains(&1));
+        skiplist.remove(&2);
+        assert!(!skiplist.contains(&2));
+        skiplist.remove(&3);
+        assert!(!skiplist.contains(&3));
+    }
+
+    #[test]
     fn test_range_iter_full() {
         let mut skiplist = SkipList::new();
         skiplist.insert(1, 2);
         skiplist.insert(2, 3);
         skiplist.insert(3, 4);
         let mut iter = skiplist.range_iter(&0, &4);
+        assert_eq!(iter.next(), Some((&1, &2)));
+        assert_eq!(iter.next(), Some((&2, &3)));
+        assert_eq!(iter.next(), Some((&3, &4)));
+    }
+
+    #[test]
+    fn test_iter() {
+        let mut skiplist = SkipList::new();
+        skiplist.insert(1, 2);
+        skiplist.insert(2, 3);
+        skiplist.insert(3, 4);
+        let mut iter = skiplist.iter();
         assert_eq!(iter.next(), Some((&1, &2)));
         assert_eq!(iter.next(), Some((&2, &3)));
         assert_eq!(iter.next(), Some((&3, &4)));
@@ -482,22 +542,5 @@ mod tests {
         assert_eq!(iter.next(), Some((&1, &2)));
         assert_eq!(iter.next(), Some((&2, &3)));
         assert_eq!(iter.next(), None);
-    }
-
-    #[test]
-    fn test_delete() {
-        let mut skiplist = SkipList::new();
-        skiplist.insert(1, 2);
-        skiplist.insert(2, 3);
-        skiplist.insert(3, 4);
-        assert!(skiplist.contains(&1));
-        assert!(skiplist.contains(&2));
-        assert!(skiplist.contains(&3));
-        skiplist.remove(&1);
-        assert!(!skiplist.contains(&1));
-        skiplist.remove(&2);
-        assert!(!skiplist.contains(&2));
-        skiplist.remove(&3);
-        assert!(!skiplist.contains(&3));
     }
 }
