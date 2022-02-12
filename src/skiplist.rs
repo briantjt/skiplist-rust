@@ -41,17 +41,14 @@ pub struct SkipList<K, V> {
 
 impl<K, V> SkipList<K, V>
 where
-    K: Ord ,
+    K: Ord,
 {
     pub fn new() -> Self {
         let mut lists = Vec::with_capacity(SKIPLIST_HEIGHT);
         for _ in 0..SKIPLIST_HEIGHT {
             lists.push(LinkedList::new());
         }
-        Self {
-            lists,
-            len: 0,
-        }
+        Self { lists, len: 0 }
     }
 
     pub fn insert(&mut self, key: K, value: V) {
@@ -147,8 +144,8 @@ where
                     }
                     Greater => {
                         current_node = ptr::null_mut();
-                        continue
-                    },
+                        continue;
+                    }
                     _ => {}
                 }
                 let mut next_node = (*current_node).next[level];
@@ -208,7 +205,7 @@ where
                             return current_node;
                         }
                         current_node = ptr::null_mut();
-                        continue
+                        continue;
                     }
                     _ => {}
                 }
@@ -241,6 +238,91 @@ where
         ptr::null_mut()
     }
 
+    pub fn remove<Q>(&mut self, key: &Q)
+    where
+        K: Borrow<Q>,
+        Q: Ord + ?Sized,
+    {
+        let mut to_update: [Link<K, V>; SKIPLIST_HEIGHT] = [ptr::null_mut(); SKIPLIST_HEIGHT];
+        let mut current_node: Link<K, V> = ptr::null_mut();
+        let mut found = false;
+        for level in (0..SKIPLIST_HEIGHT).rev() {
+            if current_node.is_null() {
+                if self.lists[level].head.is_null() {
+                    // Head of list is null, go down to the next level
+                    continue;
+                }
+                current_node = self.lists[level].head;
+            }
+            unsafe {
+                match (*current_node).key.borrow().cmp(key) {
+                    // Head of list is either the node to be deleted or greater
+                    Equal => {
+                        found = true;
+                        continue;
+                    }
+                    Greater => {
+                        current_node = ptr::null_mut();
+                        continue
+                    },
+                    _ => {}
+                }
+                let mut next_node = (*current_node).next[level];
+                if next_node.is_null() {
+                    to_update[level] = current_node;
+                    continue;
+                }
+                loop {
+                    match (*next_node).key.borrow().cmp(key) {
+                        Less => {
+                            let temp = (*next_node).next[level];
+                            if !temp.is_null() {
+                                current_node = next_node;
+                                next_node = temp;
+                            }
+                        }
+                        Equal => {
+                            found = true;
+                            to_update[level] = current_node;
+                        }
+                        Greater => {
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+        if !found {
+            return;
+        }
+        let mut to_delete = ptr::null_mut();
+        for (h, node) in to_update.into_iter().enumerate() {
+            if node.is_null() {
+                if self.lists[h].head.is_null() {
+                    continue;
+                }
+                unsafe {
+                    match (*self.lists[h].head).key.borrow().cmp(key) {
+                        Equal => {
+                            self.lists[h].head = (*self.lists[h].head).next[h];
+                        }
+                        Greater | Less => continue,
+                    }
+                }
+            } else {
+                unsafe {
+                    let next_node = (*node).next[h];
+                    let next_next_node = (*next_node).next[h];
+                    (*node).next[h] = next_next_node;
+                    to_delete = next_node;
+                }
+            }
+        }
+        unsafe {
+            Box::from_raw(to_delete);
+        }
+    }
+
     pub fn range_iter<'a, Q>(&self, start: &'a Q, end: &'a Q) -> RangeIter<'a, K, V, Q>
     where
         K: Borrow<Q>,
@@ -262,7 +344,7 @@ where
 
 impl<K, V> Default for SkipList<K, V>
 where
-    K: Ord ,
+    K: Ord,
 {
     fn default() -> Self {
         Self::new()
@@ -400,5 +482,22 @@ mod tests {
         assert_eq!(iter.next(), Some((&1, &2)));
         assert_eq!(iter.next(), Some((&2, &3)));
         assert_eq!(iter.next(), None);
+    }
+
+    #[test]
+    fn test_delete() {
+        let mut skiplist = SkipList::new();
+        skiplist.insert(1, 2);
+        skiplist.insert(2, 3);
+        skiplist.insert(3, 4);
+        assert!(skiplist.contains(&1));
+        assert!(skiplist.contains(&2));
+        assert!(skiplist.contains(&3));
+        skiplist.remove(&1);
+        assert!(!skiplist.contains(&1));
+        skiplist.remove(&2);
+        assert!(!skiplist.contains(&2));
+        skiplist.remove(&3);
+        assert!(!skiplist.contains(&3));
     }
 }
